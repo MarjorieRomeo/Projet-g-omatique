@@ -1,0 +1,600 @@
+# 1. Installer modules externes et packages nécessaires à cette étude
+
+
+La cellule ci-dessous installe et importe des modules externes Python qui ne sont pas pré-installés dans Google **Colab**
+### 1.1. Les modules externes
+!apt-get install -qq curl g++ make
+!curl -L http://download.osgeo.org/libspatialindex/spatialindex-src-1.8.5.tar.gz | tar xz
+import os
+os.chdir('spatialindex-src-1.8.5')
+!./configure
+!make
+!make install
+!pip install rtree
+!ldconfig
+!pip install geopandas
+!pip install mapclassify
+!pip install contextily
+### 1.2. Les packages python
+
+
+
+# numpy et pandas pour la manipuler et importer les données
+import pandas as pd
+import numpy as np
+
+# pour géoréférencées les données 
+import geopandas as gpd 
+
+# pour les fonds de cartes
+import contextily as cx
+
+# pour transformer les colonnes de latitudes et longitudes en points ou polygones géoréférencés
+from shapely.geometry import Polygon, Point # LineString,
+
+# afficher les figures 
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+ Pour importer les fichiers créer un sous-dossier projet_session dans le drive. 
+# connecter ce fichier google colab à notre drive 
+from google.colab import drive 
+
+# indiquer que l'on souhaite récupérer les fichiers dans google drive
+drive.mount('/content/drive', force_remount=True)
+
+# indiquer le chemin d'accès, ici on a créé un sous-dossier "projet session" puis on a assigné le chemin d'accès à ce sous dossier à google drive 
+# dans ce dossier nous avons tous les fichiers de données utilisés pour ce projet
+gdrive_path = "/content/drive/MyDrive/projet_session"
+
+# 2. Importer les données 
+
+Les fichiers sont importés avec la package pandas pour créer des dataframes à partir des fichiers csv importés.
+# fichier avec les coordonnées géographiques à l'échelle des boisés, ces données serviront pour les analyses spatiales à l'échelle du paysage 
+df_coord_patch = pd.read_csv("/content/drive/MyDrive/projet_session/patch.environment.csv")
+
+# fichier avec les coordonnées géographiques à l'échelle des quadrats, ces données serviront pour les analyses spatiales à l'échelle locale
+df_coord_quadrat = pd.read_csv("/content/drive/MyDrive/projet_session/quadrat.environment.csv")
+
+# fichier avec les abondances de chaque espèce (en colonne) par boisés échantillonnés (échelle paysage)
+df_abond_patch = pd.read_csv('/content/drive/MyDrive/projet_session/patch.abundance.csv')
+
+# fichier pour récupérer les abondances de chaque espèce (en colonne) par quadrat échantillonnés (échelle locale)
+# Pour ce fichier le code UTF-8 ne fonctionnait pas, appliquer un autre système d'encodage pour importer correctement les données avec l'argument encoding
+df_abond_quadrat = pd.read_csv("/content/drive/MyDrive/projet_session/quadrat.abundance.csv", encoding='latin-1') 
+
+# fichier pour récupérer les espèces exotiques parmi toutes les espèces échantillonnées dans les boisés de Montréal
+# l'argument sep spécifie que les variables sont séparées par des points virgules 
+df_non_native = pd.read_csv('/content/drive/MyDrive/projet_session/traits.csv', sep=";")
+
+# fichier avec les noms de parcs pour associer les abondances à des noms de parcs 
+# Pour ce fichier le code UTF-8 ne fonctionnait pas, appliquer un autre système d'encodage pour importer correctement les données avec l'argument encoding
+df_noms_parcs = pd.read_csv("/content/drive/MyDrive/projet_session/nom_parcs.csv", encoding='latin-1')
+
+Vérifier et observer la structure des dataframes créées à partir des fichiers importés pour les manipuler correctement par la suite.
+# méthode . head() associé à chaque data frame importés pour voir si la structure des dataframes est identique aux fichiers utilisés
+print(df_coord_patch.head())
+print(df_coord_quadrat.head())
+print(df_abond_patch.head())
+print(df_abond_quadrat.head())
+print(df_non_native.head())
+print(df_noms_parcs.head())
+# 3. Manipuler les dataframes importés 
+### 3.1. Sélectionner les espèces exotiques du Québec à partir du dataframe `df_non_native`. 
+
+
+
+
+# vérifier que la colonne "status" est au format numeric int64
+print(df_non_native.dtypes)
+
+# créer une liste vide pour récupérer les noms des espèces exotiques 
+non_native = []
+
+# Dans le dataframe 'df_non_native' créer deux itérations simultanément avec l'argument zip() sur les 2 colonnes, "status" et "SpCode" 
+for i, j in zip(df_non_native["Status"],df_non_native["SpCode"]): 
+  # si la cellule de la colonne "Statut" est égale à 1, l'espèce est exotique
+  if i == 1: 
+    # si cette condition est remplie, ajouter à la liste 'non_native' le nom de l'espèce associée à partir de la colonne "SpCode"
+    non_native.append(j)
+
+# enlever le point entre la famille de l'espèce et l'espèce pour chaque élément de la liste afin que les noms puisse être retrouvé dans le data frame d'abondance d'espèce par la suite
+# retourne une liste avec les noms des espèces exotiques 
+non_native =[item.replace('.', ' ') for item in non_native]
+
+# afficher le nombre d'espèces non-natives : 150 et leur nom à partir de la liste non_native récupérer grâce à la boucle
+print(len(non_native), non_native)
+
+### 3.2. Créer des dataframes pour les abondances d'espèces à l'échelle des boisés et des quadrats 
+
+
+# Echelle du paysage : utiliser les données à l'échelle des boisés
+# Utiliser la méthode .concat pour concaténer les colonnes de nom des parcs, coordonnées géographiques du dataframe df_coord_patch et l'abondance de toutes les espèces exotiques du dataframe df_abond_patch
+species_coord_patch = pd.concat([df_noms_parcs["Name"],df_coord_patch.iloc[:,0:3],df_abond_patch[non_native]], axis=1) # axis = 1 indique que la concaténation se fait sur les colonnes 
+
+# Echelle locale : utiliser les données à l'échelle des quadrats échantillonnées dans les boisés
+# Concaténer les colonnes de nom des parcs, coordonnées géographiques du dataframe df_coord_quadrat et l'abondance de toutes les espèces exotiques du dataframe df_abond_quadrat
+species_coord_quadrat = pd.concat([df_coord_quadrat.iloc[:,0:4],df_abond_quadrat[non_native]], axis=1)
+
+# vérifier que les deux nouveaux dataframes ont toutes les colonnes souhaitées avec la méthode .head()
+# à l'échelle du paysage
+print(df_abond_patch[non_native].head())
+
+# à l'échelle des quadrats
+len(df_abond_quadrat[non_native].head())
+# 4. Modifier le type des variables
+
+
+
+Pour analyser nos données, il est nécessaire de changer le type des colonnes des abondances d'espèces éxotiques. Ces colonnes doivent être de type numérique entier - int64() - ou décimal - Float64(). En conséquence, nous avons changé ces colonnes de type "object" en type numérique. Les méthodes utilisées sont issues du packages "pandas". 
+### 4.1. Modifier le dataframe des abondances à l'échelle du paysage
+# on commence l'itération à partir de la prmière colonne d'abondance d'espèce, la troisième colonne à l'indice 2
+for j in species_coord_patch.columns[2:154]: # itération sur les colonnes et non sur les lignes avec la méthode .columns[]
+  if species_coord_patch[j].dtype == object: # si la colonne est au format object 
+    species_coord_patch[j] = species_coord_patch[j].str.replace(',', '.').astype(float) # alors remplacer la virgule par un point avec la méthode "str" et transformer la cellule au format 'float' (nombre décimal) avec la méthode "as.type"
+    species_coord_patch[j] = pd.to_numeric(species_coord_patch[j]) # transformer cette même colonne au format numerique avec la méthode "to_numeric"
+  else : # si la cellule est au format int64, la boucle passe à la cellule suivante car même avec ce format, la colonne sera au format numérique 
+    continue
+
+# vérifier le type des variables avec la méthode dtypes et les variables en elle-même après transformation
+print(species_coord_patch.dtypes)
+print(species_coord_patch.head())
+### 4.2. Modifier le dataframe des abondances à l'échelle locale
+Pour le dataframe qui recense les abondances d'espèces à l'échelle des quadrats, nous appliquons la même opération que le dataframe précédent qui recense les abondances à l'échelle des boisés. 
+
+Nous transformons les colonnes d'abondance d'espèces au format object au format numérique pour obtenir des cellules de nombres entiers et des cellules de nombres décimaux. 
+# l'itération commence à l'index 3 car les 4 premières colonnes ne sont pas des abondances d'espèces, il n'est pas nécessaire de les transformer
+for n in species_coord_quadrat.columns[3:154]:
+  if species_coord_quadrat[n].dtype == object: # si la colonne est au format object 
+    species_coord_quadrat[n] = species_coord_quadrat[n].str.replace(',', '.').astype(float) # remplacer la virgule par un point et transformer la cellule au format 'float' (format décimal)
+    species_coord_quadrat[n] = pd.to_numeric(species_coord_quadrat[n]) # transformer cette colonne au format numérique
+  else : # si la colonne n'est pas au format object, la boucle continue l'itération. Les cellules dans ce cas sont des nombres entiers
+    continue
+
+# vérifier le type des variables et leurs valeurs après transformation
+print(species_coord_quadrat.dtypes)
+print(species_coord_quadrat.head())
+# 5. Occurrence moyenne des espèces 
+
+### 5.1. Occurrence moyenne des espèces à l'échelle du paysage
+Pour estimer l'occurence pour chaque espèce exotique, nous appliquons le même calcul à chaque colonne d'abondance. Nous faisons la somme des lignes où l'espèce est supérieure à 0. De cette manière, nous faisons la somme des abondances où l'espèce est présente parmi les 50 lignes pour chaque espèce. Ces lignes représentent les 50 boisés échantillonnés. Une fois que l'abondance de l'espèce est additionnée, pour les boisés où elle est présente nous divisons cette somme par le nombre de boisés total. En réalisant ce calcul, nous pouvons savoir le nombre moyen d'individus par espèce pour les boisés de la ville de Montréal. 
+
+Nous réalisons la même opération pour les quadrats afin de savoir si le nombre d'individu moyen est le même pour les deux d'échelles spatiales. 
+# calcul de l'occurrence pour l'échelle des boisés pour chaque colonne d'espèces, soit la colonne de l'indice 4 à 153
+# la méthode len() permet d'avoir le nombre totale de lignes du dataframe, soit le nnombre totale de boisés échantillonnés
+occurrence_p = species_coord_patch[species_coord_patch.iloc[:,4:153] > 0].sum()/len(species_coord_patch)
+
+# trier par ordre croissant les abondances d'espèces
+occurrence_p = occurrence_p.sort_values()
+
+# calcul de l'occurrence pour l'échelle des qudrats pour chaque colonne d'espèces
+#  la méthode len() permet d'avoir le nombre totale de lignes du dataframe, soit le nnombre totale de quadrat échantillonnés
+occurrence_l = species_coord_quadrat[species_coord_quadrat.iloc[:,4:153] > 0].sum()/len(species_coord_quadrat)
+
+# trier par ordre croissant les abondances d'espèce
+occurrence_l = occurrence_l.sort_values()
+
+# la méthode subplots permet d'afficher plusieurs plots dans une même fenêtre de sortie
+# ici, nous affichons les plots sur 2 lignes et une colonne
+fig, ax = plt.subplots(2, 1)
+
+# pour plus de lisibilité nous affichons les espèces ayant une occurrence moyenne supérieure à 0.8
+# barh = indique que nous souhaitons un diagramme avec des barres horizontales
+# l'arguement ax[0] indique que nous plaçons ce plot à la première ligne de la fenêtre de sortie
+# figsize indique la longueur et la largeur du plot souhaité
+fig_patch = occurrence_p[occurrence_p > 0.8].plot.barh(ax= ax[0], figsize=(15, 15))
+fig_patch.set_xticks(np.arange(0, 90, 5)) # modifier l'intervalle de l'axe des abcisses allant de 0 à 90 avec un pas d'unité de 5
+# Ajouter un titre, en gras, avec une taille de police de 15
+fig_patch.set_title('Figure 1. Abondance moyenne des espèces exotiques sur 50 boisés échantillonnés de Montréal', fontweight='bold', fontsize=15)
+fig_patch.grid() # grille pour mieux visualiser l'occurrence moyenne par espèce dans l'axe des abscisses
+fig_patch.set_ylabel('Espèces exotiques', fontsize=15) # ajouter une étiquette à l'axe des ordonnées et une taille de police de 15
+fig_patch.set_xlabel('nombre moyen d\'individus par boisé', fontsize=15) # ajouter une étiquette à l'axe des abscisses  et une taille de police de 15
+
+
+# calcul de l'occurrence moyenne par espèce sur l'ensemble des quadrats 
+# afficher les espèces avec une occcurence moyenne supérieure à 0.1
+# l'argumet ax[1] indique que nous plaços ce plot à la deuxième ligne de la fenêtre de sortie
+fig_quadrat = occurrence_l[occurrence_l > 0.1].plot.barh(ax= ax[1], figsize=(15, 15)) 
+fig_quadrat.set_xticks(np.arange(0, 11, 1)) # modifier l'intervalle de l'axe des abscisses allant de 0 à 11 avec un pas d'unité de 1
+fig_quadrat.set_title('Figure 2. Abondance moyenne des espèces exotiques sur 431 quadrats échantillonnés de Montréal', fontweight='bold', fontsize=15)
+fig_quadrat.grid() 
+fig_quadrat.set_ylabel('Espèces exotiques', fontsize=15)
+fig_quadrat.set_xlabel('Nombre moyen d\'individus par quadrat', fontsize=15)
+
+# ATTENTION : ici nous avons créer un dossier "project_session pour enregistrer les figures crées pour ce projet"
+# exporter les deux figures au format png dans la sous-section projet_session de notre google drive
+plt.savefig("/content/drive/MyDrive/projet_session/most_abondant_species.png")
+
+# 6. Transformer les dataframes en géodataframe 
+
+Pour réaliser une analyse spatiale et superposer plusieurs couches de données, il est nécessaire que les deux dataframes créés soient au format geodataframe. 
+
+Pour cela, utiliser les coordonnées de longitudes (colonne "X") et latitudes (colonne "Y") des dataframes "species_coord_patch" et "species_coord_quadrat". Ces colonnes contiennent le géoréférencements des données aux deux échelles spatiales. Grâce à ces colonnes, nous utilisons la méthode geometry du package geodataframe pour la transformation de dataframe à geodataframe. Ces deux colonnes sont au format WGS 84, UTM zone 18 N. En conséquence, nous appliquons la projection EPSG : 32618 correspondant à cette projection. 
+
+Nous appliquons une dernière modification sur les deux geodataframes pour les noms d'espèces, afin de faciliter l'enregistrement de nos analyses à la fin du code. 
+# Les colonnes X (longitudes) et Y (latitudes) permettent cette transformation
+# nous mettons les deux geodataframes crées dans deux objets différents un pour l'échelle du paysage "gpd_patch" et un pour l'échelle locale " gpd_quadrat". 
+gpd_patch = gpd.GeoDataFrame(species_coord_patch, geometry=gpd.points_from_xy(species_coord_patch['X'], species_coord_patch['Y']))
+gpd_quadrat = gpd.GeoDataFrame(species_coord_quadrat, geometry=gpd.points_from_xy(species_coord_quadrat['X'], species_coord_quadrat['Y']))
+
+
+# mettre un tiré entre le nom de la famille et le nom de l'espèce de chaque espèce végétale du groupe patch
+# ceci évite des problèmes lors de l'eregistrement des cartes et figures finales
+# utiliser la méthode .str.replace() et l'appliquer aux colonnes dans les deux dataframes quand il y un espace dans le nom des variables
+
+# opération pour le géodataframe à l'échelle des boisés 
+gpd_patch.columns = gpd_patch.columns.str.replace(" ", "_")
+
+# opération pour le géodataframe à l'échelle des quadrats
+gpd_quadrat.columns = gpd_quadrat.columns.str.replace(" ", "_")
+
+# la projection des données issues des fichiers csv a été enregistré en projection WGS 84 - UTM zone 18 N - cette projection est adaptée à la projection de cartes des zones nord-américaines. 
+gpd_patch.crs = "EPSG:32618"
+gpd_quadrat.crs = "EPSG:32618"
+
+# Afficher la méthode .crs rour s'assurer que les deux fichiers soient dans la même projection EPSG : 32618
+print(gpd_patch.crs)
+gpd_quadrat.crs
+
+## 7. Importer le fichier des espaces verts de la ville de Montréal et de certaines îles aux alentours
+
+
+Nous utilisons la méthode read_file() pour créer un geodaframe du fichier shp que nous souhaitons importer. 
+
+# importer le fichier avec les parcs de la ville de Montréal
+parcs = gpd.read_file("/content/drive/MyDrive/projet_session/Espace_Vert.shp")
+
+# savoir si une projection existe 
+print(parcs.crs)
+# la projection est en 32188, nous la changeons pour la même projection que les geodataframes d'abondance d'espèces
+
+# reprojeter dans la même projection que les deux geodataframes d'abondance d'espèces ci-dessus
+parcs["geometry"] = parcs["geometry"].to_crs("EPSG:32618")
+
+# afficher la nouvelle projection du geodataframe des parcs 
+print(parcs.crs)
+
+# Vérifier que les modifications ont été appliquées 
+parcs.head()
+# 8. Calcul des variables environnementales 
+
+### 8.1. Ratio périmètre/aire (PAR)
+# calculer le périmètre de chaque espaces verts à partir de la colonne geometry qui recensent leur polygone avec la méthode .length
+# mettre le résultat dans une nouvelle serie (= colonne) du geodataframe "parcs"
+# le périmètre est estimé en m car le périmètre des polygones est calculé à partir de la projection EPSG 32618
+parcs["perimetre"] = parcs["geometry"].length
+
+# Calculer l'aire des polygones à partir de la colonne geometry dans le geodataframe des espaces verts avec la méthode .area
+# le périmètre est estimé en m car le périmètre des polygones est calculé à partir de la projection EPSG 32618
+# l'aire est estimé en m² car le périmètre des polygones est calculé à partir de la projection EPSG 32618
+parcs["aire"] = parcs["geometry"].area
+
+# calculer le ratio périmètre/aire à partir des deux variables précédemment créées et créer une troisième variable dans laquelle nous insérons le résultat du ratio périmètre-aire par espaces verts
+# Comme PAR est un ratio il est entre 0 et 1
+parcs["PAR"] = parcs["perimetre"]/parcs["aire"]
+
+# vérifier le type des variables que l'on vient de créer
+# elles sont toutes numériques 
+print(parcs.dtypes)
+
+## 9. Jointure spatiale des espaces verts et des abondances d'espèces
+### 9.1. échelle du paysage
+Grâce à cette jointure nous obtenons seulement les parcs où les espèces ont été échantillonnées à l'échelle du paysage. 
+parcs_species_patch = gpd.sjoin(gpd_patch, parcs, how='inner', predicate='within') # les points d'abondance d'espèces doivent d'être dans les polygones de parcs avec l'argument "inner" et "within"
+parcs_species_patch.head()
+### 9.2. échelle locale
+
+Nous souhaitons sélectionner les parcs où les abondances d'espèces à l'échelle locale (des quadrats) ont été échatillonné.
+parcs_species_quadrat = gpd.sjoin(gpd_quadrat, parcs, how='inner', predicate='within') 
+parcs_species_quadrat.head()
+# 10. Distribution et répartition spatiale variable PAR
+
+Cette variable est seulement testée à l'échelle du paysage.
+# Afficher les figures en 2 lignes et une colonne avec la méthode subplot
+fig, ax = plt.subplots(2, 1)
+# histogramme des valeurs de la variable PAR
+# l'agrument ax[0] indique que l'histogramme de la distribution des valeurs de la variable PAR est à la première ligne de la fen^tre de sortie
+# l'argument barstacked indique que l'on souhaite une distribution qui s'affiche sous forme de diagramme en barres
+# l'argument rwidth=.75 indique l'épaisseur des barres de l'histogramme
+hist_parcs = parcs_species_patch["PAR"].hist(histtype='barstacked', align='mid', rwidth=.75 , legend=True,figsize=(15,15), ax=ax[0]) 
+hist_parcs.set_xticks(np.arange(0, 0.05, 0.005)) # création d'un array avec le package numpy de 0 à 0.05 avec u pas de temps de 0.005 pour les étiquettes de l'axe des asbcisses
+hist_parcs.set_xlabel('Ratio périmètre/aire', fontsize=15) # étiquette axe des abscisses
+hist_parcs.set_ylabel('Nombre de parcs', fontsize=15) # étiquette axe des ordonnées 
+hist_parcs.set_title('Figure 3. Distribution du ratio périmètre-aire (PAR) dans l\'ensemble des espaces verts de Montréal ', fontweight='bold', fontsize=15) # titre du plot
+
+# afficher les valeurs de PAR selon les parcs où les espèces ont été échantillonnées
+# ax[1] : afficher le plot sur la deuxième ligne de la fenêtre de sortie
+# arugement naturalbreaks, afin d'afficher les PAR en  de chaleur sous forme catégorielle
+fig_parcs = parcs_species_patch.plot(column="PAR", figsize=(30,30), edgecolor='#169acf', scheme="naturalbreaks", ax = ax[1], legend=True) # afficher la colonne des ratio par espaces verts dans la deuxième ligne ax = ax[1]
+fig_parcs.set_ylabel('Latitude', fontsize=15) # étiquette axe des ordonnées 
+fig_parcs.set_xlabel('Longitude', fontsize=15) # étiquettes axe des abscisses 
+fig_parcs.set_title('Figure 4. Répartition du PAR des parcs échantillonnées de Montréal ', fontweight='bold', fontsize=15) # titre en gras avec une police de 15
+
+fig.subplots_adjust(bottom=0.2) # augmenter l'espace du bas des plots avec l'argument bottom
+fig.subplots_adjust(top = 1.5) # augmenter l'espace du haut es plots avec l'argument top
+
+# méthode add_basemap pour mettre un fond de carte avec le package contextily "cx"
+# argument crs : indique la projection WGS 84, UTM zone 8
+# argument source : indique le style de fond de carte que l'on souhaite
+cx.add_basemap(fig_parcs,zoom=12, crs="EPSG:32618",source=cx.providers.CartoDB.Voyager) 
+
+
+# sauvegarder l'histogramme et la carte dans un même png grâce à la méthode subplot qui nous a permis d'enregistrer les deux figures dans une même fenêtre
+plt.savefig("/content/drive/MyDrive/projet_session/PAR.png", bbox_inches="tight") # l'argument bbox_inches="tight" enregistre les plots dans un format qui évite que les figures soient coupées
+
+Pour vérifier si la distribution est normale, nous souhaitons savoir si la moyenne et la médiane des valeurs sont proches. Les deux ne sont proches, seulement 0.001 de différences, ce qui montre que les 12 espaces verts  dans la distribution ne représentent pas de valeurs extrêmes. 
+parcs_species_patch["PAR"].mean()
+parcs_species_patch["PAR"].median()
+# 11. Deuxième variable environnementale : les îlots de chaleur
+
+### 11.1. Importer le fichier des îlots de chaleur de la ville de Montréal
+# importer le fichier shp créées des îlots de chaleurs clipper sur le fichier des données d'espaces verts de Montréal
+# pour lire le fichier shp, il est nécessaire d'importer aussi le fichier shx sur google drive
+ilot = gpd.read_file("/content/drive/MyDrive/projet_session/ilot_chaleur_mtl.shp")
+ilot.head()
+# assigner la même projection que les autres données importées d'abondances d'espèces et variable de l'aire des parcs
+ilot.crs = "EPSG:32618"
+
+# vérifier que le projection est bien appliquée au GeoDataFrame ilot avec la méthode .crs
+ilot.crs
+### 11.2. Jointure des données à l'échelle du paysage 
+
+Il est plus pertinent d'utiliser cette variable à l'échelle locale qu'à l'échelle du paysage étant donné que la différence de températures du sol peut être considérable d'un quadrat à l'autre. 
+# Changer le nom des colonnes 'index_right' et 'index_left' pour réaliser la joiture des ilots de chaleur dans les parcs où les espèces ont été échantillonnées avec la méthode rename
+parcs_species_patch = parcs_species_patch.rename(columns={'index_right': 'right_index_old','index_left': 'left_index_old'})
+# Nous souhaitons garder seulement les températures des îlots de chaleurs dans les parcs où les pesèces ont été échantillonnés avec les arguments inner et within
+species_ilot_patch = gpd.sjoin(parcs_species_patch, ilot, how='inner', predicate='within') 
+# afficher les deux plots ci-dessous sur deux lignes 
+fig, ax = plt.subplots(2, 1)
+
+# créer un array avec le package numpy pour centrer les barres de l'histogramme avec les valeurs de DN 
+bins = np.arange(6) - 0.5
+# afficher l'histogramme de la colonne DN qui reprsente la variable des îlots de chaleurs des boisés souhaités
+# ax[0] : plot à la prmeière ligne de la fenêtre de sortie
+hist_ilot = species_ilot_patch["DN"].plot.hist(figsize=(15,15), align="mid", rwidth= .75, bins=bins, ax=ax[0]) 
+hist_ilot.set_xticks(np.arange(1, 5, 1)) # créer un array qui va indiquer l'intervalle de l'axe des abscisses, soit de 1 à 5 à pas d'unité de 1
+hist_ilot.set_ylabel('Nombre de parcs', fontsize=15) # titre de l'axe des ordonnées
+hist_ilot.set_xlabel('Températures (°C)', fontsize=15) # titre de l'axe des abscisses 
+
+# pas numéro associé à cette figure car nous ne l'utiliserons pas pour le rapport écrit
+hist_ilot.set_title('Figure. Distribution des températures (°C) des îlots de chaleurs dans les parcs éhantillonnées de Montréal ', fontweight='bold', fontsize=15)
+
+# carte des îlots de chaleurs
+# Reds : gradient de chaleur
+# scheme : intervalle selon la distribution des données
+fig_ilot = species_ilot_patch.plot(cmap="Reds", column="DN", ax=ax[1], scheme = "naturalbreaks", legend=True,figsize=(15,15))
+fig_ilot.set_ylabel('Latitude', fontsize=15)
+fig_ilot.set_xlabel('Longitude', fontsize=15)
+fig_ilot.set_title('Figure 5. Répartition des îlots de chaleur dans les espaces verts de Montréal \n à l\'échelle des boisés ', fontweight='bold', fontsize=15)
+cx.add_basemap(fig_ilot,zoom=12, crs="EPSG:32618",source=cx.providers.CartoDB.Voyager) # préciser la projection souhaitée avec l'argument crs
+
+# espacement en haut et en bas de chaque plot
+fig.subplots_adjust(bottom = 0.2)
+fig.subplots_adjust(top = 1.5)
+
+# enregistrer les deux plots dans un même fichier au format png
+plt.savefig("/content/drive/MyDrive/projet_session/ilot_distri_spatiale_boises.png", bbox_inches="tight")
+ 
+
+### 11.3. Jointure des données à l'échelle locale
+
+Pour cette échelle spatiale, les îlots de chaleur sont supersosés d'après les quadrats dans les espaces verts où les epsèces exotiques ont été échantillonné. Les mêmes opérations ont été utilisés que celle à l'échelle du patsage. 
+parcs_species_quadrat = parcs_species_quadrat.rename(columns={'index_right': 'right_index_old','index_left': 'left_index_old'})
+species_ilot_quadrat = gpd.sjoin(parcs_species_quadrat, ilot, how='inner', predicate='within') 
+species_ilot_quadrat.head()
+
+Véirifer la moyenne et la médiane de la variable DN pour vérifier si la distribution des îlots de chaleur est normale. 
+species_ilot_quadrat["DN"].mean()
+species_ilot_quadrat["DN"].median()
+species_ilot_quadrat["DN"]
+fig, ax = plt.subplots(2, 1)
+
+# créer un array avec la package numpy de 9 intervalles et déplacer les valeurs des barres sur l'axe des abscises à un intervalle de 0.5 d'après les valeurs de la variable des températures du sol "DN"
+# 0.5 permet de centrer les étiquettes sous les barres dans l'histogramme ci-dessous
+bins = np.arange(9) - 0.5
+
+# l'argument bins permet d'indiquer l'intervalle des barres 
+hist_ilot = species_ilot_quadrat["DN"].hist(figsize=(15,15), align="mid", rwidth= .75, bins=bins, ax=ax[0]) 
+# modifier l'intervalle de l'axe des abcisses
+hist_ilot.set_xticks(np.arange(1, 10, 1)) # minimum de l'axe : 0, maximum de l'axe 10, intervalle de 1
+hist_ilot.set_ylabel('Nombre de quadrats',  fontsize=15)
+hist_ilot.set_xlabel('Températures (°C)', fontsize=15)
+
+# \n sert à mettre la suite du titre à la ligne
+hist_ilot.set_title('Figure 6. Distribution des températures des îlots de chaleurs dans les quadrats \n des parcs échantillonnés de Montréal ', fontweight='bold', fontsize=15)
+
+
+fig_ilot = species_ilot_quadrat.plot(cmap="Reds", column="DN", ax=ax[1], scheme = "naturalbreaks", legend=True,figsize=(15,15))
+fig_ilot.set_ylabel('Latitude', fontsize=15)
+fig_ilot.set_xlabel('Longitude', fontsize=15)
+fig_ilot.set_title('Figure 7. Répartition des îlots de chaleur dans les quadrats \n des parc échantillonnés de Montréal ', fontweight='bold', fontsize=15)
+cx.add_basemap(fig_ilot,zoom=12, crs="EPSG:32618",source=cx.providers.CartoDB.Voyager)
+
+fig.subplots_adjust(bottom = 0.2)
+fig.subplots_adjust(top = 1.5)
+
+plt.savefig("/content/drive/MyDrive/projet_session/ilot_distri_spatiale_quadrat.png", bbox_inches="tight")
+## Automatisation des cartes d'abondance
+
+# 12. Automatisation 
+### 12.1. Matrices de corrélation
+Nous avons testé les deux variables environnementales choisies PAR et îlots de chaleurs en fonction des abondances des espèces exotiques à deux échelles spatiales. Chaque corrélogramme (heatmao) représente la corrélation d'une variable environnementale (variable explicative) en fonction de l'abondance d'une espèce (variable réponse). 
+parcs_species_patch.dtypes[50:154]
+from sklearn.preprocessing import MinMaxScaler
+
+for column in parcs_species_patch.columns[4:154]:
+  scaler = MinMaxScaler()
+  cols_to_norm = ['PAR', column]
+  scaler.fit(parcs_species_patch[cols_to_norm])
+  parcs_species_patch[cols_to_norm]  = scaler.transform(parcs_species_patch[cols_to_norm])
+# itérations sur les deux geodataframes représentant les deux échelles spatiales
+for column, specie in zip(parcs_species_patch.columns[4:154], species_ilot_quadrat.columns[4:154]) : 
+  # diviser la fenêtre de sortie en deux lignes et une colonne avec la méthode subplots de Matplotlib
+  fig, ax = plt.subplots(2, 1)
+
+  # prendre la variable PAR et une espèce à la fois dans le dataframe des boisés 
+  cols_to_norm = ['PAR', column]
+
+  # prendre la variable qui représentent les îlots de chaleur et une espèce à la fois dans la dataframe des quadrats
+  cols_quadrat = ["DN", specie]
+
+  # normaliser la variable PAR et les abondances d'espèces à l'échelle des quadrats à chaque nouvelle itération
+
+  scaler = MinMaxScaler()
+  scaler.fit(parcs_species_patch[cols_to_norm])
+  parcs_species_patch[cols_to_norm]  = scaler.transform(parcs_species_patch[cols_to_norm])
+  # test de corrélation de PAR et les abondances d'une espèce exotique  à l'échelle du paysage avec la méthode corr()
+  # test paramétrique de Pearson afin d'avoir les coefficicents de Pearson une fois que nos variables sont normalisées
+
+  corr_test = parcs_species_patch[cols_to_norm].corr(method="pearson")
+  fig_corr = sns.heatmap(corr_test, annot=True, ax=ax[0])  # annot affiche les résultats de corrélation entre les variables sur le heatmap
+  fig_corr.set_title(f'Corrélation de l\'effet de lisière (PAR) en fonction de l\'abondance de {column} \n des parcs échantillonnés de Montréal en 2019', fontweight='bold', fontsize=15)
+
+  # normaliser la variable d'îlot de chaleur et les abondances d'espèces à l'échelle des quadrats à chaque nouvelle itération
+  scaler = MinMaxScaler()
+  scaler.fit(species_ilot_quadrat[cols_quadrat])
+  species_ilot_quadrat[cols_quadrat]  = scaler.transform(species_ilot_quadrat[cols_quadrat])
+  # test de corrélation des variables environnementales 
+  # test paramétrique de Pearson afin d'avoir les coefficicents de Pearson une fois que nos variables sont normalisées
+  corr_quadrat = species_ilot_quadrat[cols_quadrat].corr(method="pearson")
+  fig_corr_quadrat = sns.heatmap(corr_quadrat, annot=True, ax=ax[1])  # annot sert à afficher les résultats de corrélation entre les variables 
+  fig_corr_quadrat.set_title(f'Corrélation des îlots de chaleur en fonction de l\'abondance de {column} \n des parcs échantillonnés de Montréal en 2019', fontweight='bold', fontsize=15)
+
+  # espacer les deux figures, nous avons particulièrement augmenter l'espèce du haut avec l'argument "top" et du bas avec l'argument "bottom" engtre les 2 heatmaps
+  plt.subplots_adjust(left=0.1, 
+                    bottom=2.5,  
+                    right=0.9,  
+                    top=4.9,  
+                    wspace=0.75,  
+                    hspace=0.75)
+
+  # enregistrer les deux heatmaps en indiquant le nom de l'espèce testée dans le nom du fichier png enregistré
+  plt.savefig(f"/content/drive/MyDrive/projet_session/correlation_{column}.png", bbox_inches="tight")
+  plt.show()
+
+  
+# créer grâce au package pandas avec les variables de nom d'espèces
+enva = ["rhamn_catha", "frang_alnus", "anthr_sylve"]
+# associer le nom des espèces exotiques au geodataframe à l'échelle des boisés 
+for column in parcs_species_patch[enva]:
+  # afficher seulement les parcs où l'abondance est suppérieure à 0
+  # l'argument s indique que la taille des points sur la carte est déterminée à partir de l'abondance de l'espèce dans le parc
+  fig_abond = parcs_species_patch[parcs_species_patch[column]>0].plot(column=column, scheme="naturalbreaks", figsize=(15,15), legend=True, s=parcs_species_patch[column], cmap="copper") 
+  cx.add_basemap(fig_abond, crs="EPSG:32618", source=cx.providers.CartoDB.Voyager)
+  fig_abond.set_ylabel('Latitude', fontsize=15)
+  fig_abond.set_xlabel('Longitude', fontsize=15)
+  fig_abond.set_title(f'Figure. Abondance de {column} \n dans les parcs échantillonnés de Montréal ', fontweight='bold', fontsize=15)
+
+  plt.savefig(f"/content/drive/MyDrive/projet_session/abondance_{column}_paysage.png", bbox_inches="tight")
+  plt.show()
+
+# les mêmes techniques sont utilisées à l'échelle des quadrats pour l'automatisation 
+enva = ["rhamn_catha", "frang_alnus", "anthr_sylve"]
+for column in species_ilot_quadrat[enva]:
+
+  fig_abond = species_ilot_quadrat[species_ilot_quadrat[column]>0].plot(column=column,scheme="naturalbreaks", figsize=(15,15), legend=True, s=species_ilot_quadrat[column], cmap="copper") 
+  cx.add_basemap(fig_abond, crs="EPSG:32618", source=cx.providers.CartoDB.Voyager)
+  fig_abond.set_ylabel('Latitude', fontsize=15)
+  fig_abond.set_xlabel('Longitude', fontsize=15)
+  fig_abond.set_title(f'Figure. Abondance de {column} \n dans les quadrats des parcs échantillonnés de Montréal ', fontweight='bold', fontsize=15)
+
+  plt.savefig(f"/content/drive/MyDrive/projet_session/abondance_{column}_quadrat.png", bbox_inches="tight")
+  plt.show()
+### 12. (TEST) Abondance espèce et matrice de corrélation - échelle paysage
+
+
+Tentative de réaliser une matrice de corrélation sous-forme de heatmap avec une carte d'abondance d'espèce à l'échelle des boisés. La sortie n'affiche pas correctement les cartes d'abondance par espèce. 
+for column in parcs_species_patch.columns[4:154]:
+
+  fig, ax = plt.subplots(2, 1)
+
+  cols_to_norm = ['PAR', column]
+  corr_test = parcs_species_patch[cols_to_norm].corr()
+  fig_corr = sns.heatmap(corr_test, annot=True, ax=ax[0])  # annot sert à afficher les résultats de corrélation entre les variables 
+  # enregistrer la heat map de correlation à l'échelle du paysage en précisant le nom de l'espèce dans le fichier png enregistré
+  fig_corr.set_title(f'Figure. Coorelation de PAR en fonction de l\'abondance de {column} \n dans les parcs échantillonnés de Montréal ', fontweight='bold', fontsize=15)
+  # la méthode .show() après l'enregistrement de la figure évite d'enregistrer une page blanche
+  # plt.show()
+
+  # fig, ax = plt.subplots()
+  fig_abond = parcs_species_patch[parcs_species_patch[column]>0].plot(column=column, ax=ax[1], figsize=(10,10), legend=True, s=parcs_species_patch[column], cmap="copper") 
+  cx.add_basemap(fig_abond, crs="EPSG:32618", source=cx.providers.CartoDB.Voyager)
+  fig_abond.set_ylabel('Latitude', fontsize=15)
+  fig_abond.set_xlabel('Longitude', fontsize=15)
+  fig_abond.set_title(f'Figure. Abondance de {column} \n dans les parcs échantillonnés de Montréal ', fontweight='bold', fontsize=15)
+
+  plt.subplots_adjust(left=0.1, 
+                    bottom=1.5,  
+                    right=0.9,  
+                    top=3.9,  
+                    wspace=0.75,  
+                    hspace=0.75)
+  plt.savefig(f"/content/drive/MyDrive/projet_session/abondance_correlation_paysage_{column}.png", bbox_inches="tight")
+  plt.show()
+### 12. (TEST) Abondance espèce et matrice de corrélation - échelle locale
+
+Nous avons essayé d'automatisé le test de corrélation et la carte d'abondance d'espèce à l'échelle des quadrats échantillonnés, mais l'affichage là encore ne pas fonctionner. 
+
+for column in species_ilot_quadrat.columns[4:154]:
+
+  fig, ax = plt.subplots(2, 1)
+
+  cols_to_norm = ['DN', column
+  corr_test = species_ilot_quadrat[cols_to_norm].corr()
+  fig_corr = sns.heatmap(corr_test, annot=True, ax=ax[0])  # annot sert à afficher les résultats de corrélation entre les variables 
+  # enregistrer la heat map de correlation à l'échelle du paysage en précisant le nom de l'espèce dans le fichier png enregistré
+  fig_corr.set_title(f'Figure. Coorelation des îlots de chaleur en fonction de l\'abondance de {column} \n dans les parcs échantillonnés de Montréal ', fontweight='bold', fontsize=15)
+  # la méthode .show() après l'enregistrement de la figure évite d'enregistrer une page blanche
+  # plt.show()
+
+  # fig, ax = plt.subplots()
+  fig_abond = species_ilot_quadrat[species_ilot_quadrat[column]>0].plot(column=column, ax=ax[1], figsize=(10,10), legend=True, s=species_ilot_quadrat[column], cmap="copper") 
+  cx.add_basemap(fig_abond, crs="EPSG:32618", source=cx.providers.CartoDB.Voyager)
+  fig_abond.set_ylabel('Latitude', fontsize=15)
+  fig_abond.set_xlabel('Longitude', fontsize=15)
+  fig_abond.set_title(f'Figure. Abondance de {column} \n dans les parcs échantillonnés de Montréal ', fontweight='bold', fontsize=15)
+
+  plt.subplots_adjust(left=0.1, 
+                    bottom=1.5,  
+                    right=0.9,  
+                    top=3.9,  
+                    wspace=0.75,  
+                    hspace=0.75)
+  plt.savefig(f"/content/drive/MyDrive/projet_session/abondance_correlation_quadrat_{column}.png", bbox_inches="tight")
+  plt.show()
+12. (test) Répartition abondance espèce 
+
+A l'échelle des boisés, nous avons essayé d'automatiser une carte d'abondance d'espèces exotiques par parcs échantillonnés partageant ayant aussi la variable PAR. 
+for column in parcs_species_patch.columns[4:154]:
+  fig, ax = plt.subplots()
+  fig_abond = parcs_species_patch[parcs_species_patch[column]>0].plot(column=column, ax=ax, scheme="naturalbreaks", figsize=(10,10), legend=True, s=parcs_species_patch[column], cmap="copper") 
+  cx.add_basemap(fig_abond, crs="EPSG:32618", source=cx.providers.CartoDB.Voyager)
+  fig_abond.set_ylabel('Latitude', fontsize=15)
+  fig_abond.set_xlabel('Longitude', fontsize=15)
+  fig_abond.set_title(f'Figure. Abondance de {column} \n dans les parcs échantillonnés de Montréal ', fontweight='bold', fontsize=12)
+
+  plt.subplots_adjust(left=0.1, 
+                    bottom=1.5,  
+                    right=0.9,  
+                    top=3.9,  
+                    wspace=0.75,  
+                    hspace=0.75)
+  plt.savefig(f"/content/drive/MyDrive/projet_session/abondance_{column}_paysage.png", bbox_inches="tight")
+  plt.show()
+A l'échelle des quadrats, nous avons essayé d'automatiser une carte d'abondance d'espèces exotiques par quadrats de parcs échantillonnés partageant ayant aussi la variable des îlots de chaleur. 
+for column in species_ilot_quadrat.columns[4:154]:
+  fig, ax = plt.subplots()
+  fig_abond = species_ilot_quadrat[species_ilot_quadrat[column]>0].plot(column=column, ax=ax, scheme="naturalbreaks", figsize=(10,10), legend=True, s=species_ilot_quadrat[column], cmap="copper") 
+  cx.add_basemap(fig_abond, crs="EPSG:32618", source=cx.providers.CartoDB.Voyager)
+  fig_abond.set_ylabel('Latitude', fontsize=15)
+  fig_abond.set_xlabel('Longitude', fontsize=15)
+  fig_abond.set_title(f'Figure. Abondance de {column} \n dans les parcs échantillonnés de Montréal ', fontweight='bold', fontsize=12)
+
+  plt.subplots_adjust(left=0.1, 
+                    bottom=1.5,  
+                    right=0.9,  
+                    top=3.9,  
+                    wspace=0.75,  
+                    hspace=0.75)
+  plt.savefig(f"/content/drive/MyDrive/projet_session/abondance_{column}_quadrat.png", bbox_inches="tight")
+  plt.show()
